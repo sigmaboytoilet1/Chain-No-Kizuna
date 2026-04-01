@@ -34,7 +34,7 @@ class ClassicGame:
         "group_id", "players", "players_in_game", "state", "start_time", "end_time",
         "extended_user_ids", "min_players", "max_players", "time_left", "time_limit",
         "min_letters_limit", "current_word", "longest_word", "longest_word_sender_id",
-        "answered", "accepting_answers", "turns", "used_words", "join_lock",
+        "answered", "accepting_answers", "turns", "used_words", "join_lock", "answer_lock",
         "_admin_cache", "allow_any_player_answer"
     )
 
@@ -66,6 +66,7 @@ class ClassicGame:
         self.allow_any_player_answer = False
 
         self.join_lock = asyncio.Lock()  # Prevent same user / vp joining as multiple players
+        self.answer_lock = asyncio.Lock() # Protect against race conditions in turn processing
         
         self._admin_cache: dict[int, tuple[float, bool]] = {} # user_id -> (timestamp, is_admin)
 
@@ -115,6 +116,7 @@ class ClassicGame:
         game.used_words = set(data.get("used_words", []))
         game.extended_user_ids = set(data.get("extended_user_ids", []))
         game.join_lock = asyncio.Lock()
+        game.answer_lock = asyncio.Lock()
         game._admin_cache = {}
 
         # Reconstruct players
@@ -447,26 +449,30 @@ class ClassicGame:
         logger.info(f"VP turn in group {self.group_id}. Thinking for {delay:.2f}s...")
         await asyncio.sleep(delay)
 
-        word = self.get_random_valid_answer()
+        async with self.answer_lock:
+            if self.answered or not self.accepting_answers:
+                return
 
-        if not word:  # No valid words to choose from
-            logger.info(f"VP in group {self.group_id} has no valid words.")
+            word = self.get_random_valid_answer()
+
+            if not word:  # No valid words to choose from
+                logger.info(f"VP in group {self.group_id} has no valid words.")
+                try:
+                    await vp_bot.send_message(self.group_id, "/forceskip bey")
+                    self.time_left = 0
+                except Exception as e:
+                    logger.error(f"VP failed to send skip message: {e}")
+                return
+
+            logger.info(f"VP in group {self.group_id} answering: {word}")
             try:
-                await vp_bot.send_message(self.group_id, "/forceskip bey")
-                self.time_left = 0
+                await vp_bot.send_message(self.group_id, word.capitalize())
             except Exception as e:
-                logger.error(f"VP failed to send skip message: {e}")
-            return
+                logger.error(f"VP failed to send answer: {e}")
+                return
 
-        logger.info(f"VP in group {self.group_id} answering: {word}")
-        try:
-            await vp_bot.send_message(self.group_id, word.capitalize())
-        except Exception as e:
-            logger.error(f"VP failed to send answer: {e}")
-            return
-
-        self.post_turn_processing(word)
-        await self.send_post_turn_message(word)
+            self.post_turn_processing(word)
+            await self.send_post_turn_message(word)
 
     async def additional_answer_checkers(self, word: str, message: types.Message) -> bool:
         # To be overridden by other game modes
@@ -475,31 +481,36 @@ class ClassicGame:
 
     async def handle_answer(self, message: types.Message) -> None:
         """Processes a potential answer from a player and validates it against game rules."""
-        word = message.text.lower()
+        async with self.answer_lock:
+            # Re-verify state inside the lock to prevent double-processing
+            if self.answered or not self.accepting_answers:
+                return
 
-        # Check if answer is invalid
-        if not word.startswith(self.current_word[-1]):
-            await message.reply(
-                f"<i>{word.capitalize()}</i> does not start with <i>{self.current_word[-1].upper()}</i>."
-            )
-            return
-        
-        if self.min_word_length_enforced and len(word) < self.min_letters_limit:
-            await message.reply(
-                f"<i>{word.capitalize()}</i> has less than {self.min_letters_limit} letters."
-            )
-            return
-        if word in self.used_words:
-            await message.reply(f"<i>{word.capitalize()}</i> has been used.")
-            return
-        if not check_word_existence(word):
-            await message.reply(f"<i>{word.capitalize()}</i> is not in my list of words.")
-            return
-        if not await self.additional_answer_checkers(word, message):
-            return
+            word = message.text.lower()
 
-        self.post_turn_processing(word)
-        await self.send_post_turn_message(word)
+            # Check if answer is invalid
+            if not word.startswith(self.current_word[-1]):
+                await message.reply(
+                    f"<i>{word.capitalize()}</i> does not start with <i>{self.current_word[-1].upper()}</i>."
+                )
+                return
+            
+            if self.min_word_length_enforced and len(word) < self.min_letters_limit:
+                await message.reply(
+                    f"<i>{word.capitalize()}</i> has less than {self.min_letters_limit} letters."
+                )
+                return
+            if word in self.used_words:
+                await message.reply(f"<i>{word.capitalize()}</i> has been used.")
+                return
+            if not check_word_existence(word):
+                await message.reply(f"<i>{word.capitalize()}</i> is not in my list of words.")
+                return
+            if not await self.additional_answer_checkers(word, message):
+                return
+
+            self.post_turn_processing(word)
+            await self.send_post_turn_message(word)
 
     def post_turn_processing(self, word: str) -> None:
         """Updates game state, word counts, and persistence after a valid answer."""

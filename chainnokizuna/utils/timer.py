@@ -15,14 +15,21 @@ class GameTimer:
     async def __anext__(self) -> int:
         if self.loop is None:
             self.loop = asyncio.get_running_loop()
-            self._last_tick = self.loop.time()
+            self._start_time = self.loop.time()
+            self._ticks_yielded = 0
         
         await asyncio.sleep(1)
-        now = self.loop.time()
-        delta = int(now - self._last_tick)
         
+        now = self.loop.time()
+        elapsed = now - self._start_time
+        target_ticks = int(elapsed)
+        
+        delta = target_ticks - self._ticks_yielded
+        
+        # Ensure we always yield at least 1 tick to prevent infinite fast loops
+        # and ensure game progress, but don't let it drift too far ahead.
         if delta < 1:
-            delta = 1 # Fallback to prevent infinite fast loop if sleep wakes up slightly early
+            delta = 1
             
-        self._last_tick = now
+        self._ticks_yielded += delta
         return delta

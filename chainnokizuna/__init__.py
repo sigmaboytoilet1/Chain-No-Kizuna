@@ -29,18 +29,26 @@ dp.error.register(error_handler)
 
 async def background_task_loop():
     """Periodic task loop for updating the word dictionary (default: 1 hour)."""
+    # First update is now handled by startup()
     while True:
+        await asyncio.sleep(60 * 60)  # Sleep first, run periodically
         try:
             await Words.update()
         except Exception as e:
             logger.error(f"Error in background task loop: {e}")
-        await asyncio.sleep(60 * 60)  # Run every hour
 
 
 @dp.startup()
 async def startup():
     """Bot initialization hook: starts resources and background workers."""
     await init_resources()
+    
+    # Ensure word list is loaded BEFORE bot starts accepting messages
+    try:
+        await Words.update()
+    except Exception as e:
+        logger.error(f"Initial word dictionary update failed: {e}")
+
     asyncio.create_task(background_task_loop())
     try:
         await send_admin_group("Bot starting.")

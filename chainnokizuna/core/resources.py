@@ -100,25 +100,39 @@ async def init_resources() -> None:
     logger.info(f"Bot initialized: @{GlobalState.bot_user.username}")
 
     logger.info("Connecting to MongoDB...")
-    mongo_client = motor.motor_asyncio.AsyncIOMotorClient(
-        MONGO_URI,
-        maxPoolSize=50,
-        minPoolSize=10,
-        retryWrites=True
-    )
-    # Check connection
-    await mongo_client.admin.command('ping')
-    await ensure_indexes()
+    try:
+        mongo_client = motor.motor_asyncio.AsyncIOMotorClient(
+            MONGO_URI,
+            maxPoolSize=50,
+            minPoolSize=10,
+            retryWrites=True,
+            serverSelectionTimeoutMS=5000
+        )
+        # Check connection
+        await mongo_client.admin.command('ping')
+        await ensure_indexes()
+        logger.info("MongoDB connected and indexed.")
+    except Exception as e:
+        logger.critical(f"CRITICAL: Failed to connect to MongoDB: {e}")
+        mongo_client = None
+        raise
 
     if REDIS_URL:
         logger.info("Connecting to Redis...")
-        vk = redis.from_url(
-            REDIS_URL,
-            decode_responses=True,
-            max_connections=20,
-            socket_keepalive=True,
-            retry_on_timeout=True
-        )
+        try:
+            vk = redis.from_url(
+                REDIS_URL,
+                decode_responses=True,
+                max_connections=20,
+                socket_keepalive=True,
+                retry_on_timeout=True,
+                socket_timeout=5
+            )
+            await vk.ping()
+            logger.info("Redis connected.")
+        except Exception as e:
+            logger.error(f"Failed to connect to Redis: {e}")
+            vk = None
 
 async def ensure_indexes() -> None:
     """Ensure MongoDB indexes exist on startup."""

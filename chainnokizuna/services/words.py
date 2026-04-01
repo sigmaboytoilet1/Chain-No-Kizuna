@@ -37,6 +37,8 @@ class Words:
                         text = await resp.text()
                         # Cache the words
                         try:
+                            import os
+                            os.makedirs("chainnokizuna/data", exist_ok=True)
                             async with aiofiles.open("chainnokizuna/data/words.txt", "w", encoding="utf-8") as f:
                                 await f.write(text)
                         except Exception as e:
@@ -49,10 +51,15 @@ class Words:
             
             # Fallback to local cache
             try:
-                async with aiofiles.open("chainnokizuna/data/words.txt", "r", encoding="utf-8") as f:
-                    logger.info("Loading words from local cache.")
-                    content = await f.read()
-                    return content.splitlines()
+                import os
+                if os.path.exists("chainnokizuna/data/words.txt"):
+                    async with aiofiles.open("chainnokizuna/data/words.txt", "r", encoding="utf-8") as f:
+                        logger.info("Loading words from local cache.")
+                        content = await f.read()
+                        return content.splitlines()
+                else:
+                    logger.error("No local wordlist cache found.")
+                    return []
             except FileNotFoundError:
                 logger.error("No local wordlist cache found.")
                 return []

@@ -18,7 +18,7 @@ class GuessTheWordGame(ClassicGame):
     name = "guess the word"
     command = "startguess"
 
-    __slots__ = ("target_word", "guess_count", "max_guesses", "guess_history", "dictionary", "last_waiting_msg_id")
+    __slots__ = ("target_word", "guess_count", "max_guesses", "guess_history", "dictionary", "last_waiting_msg_id", "state_lock")
 
     def __init__(self, group_id: int) -> None:
         super().__init__(group_id)
@@ -30,6 +30,7 @@ class GuessTheWordGame(ClassicGame):
         self.allow_any_player_answer = True
         self.time_limit = 60
         self.last_waiting_msg_id: Optional[int] = None
+        self.state_lock = asyncio.Lock()
 
     def to_dict(self) -> dict:
         data = super().to_dict()
@@ -52,13 +53,15 @@ class GuessTheWordGame(ClassicGame):
         game.dictionary = [] # Will be lazy loaded in initialization if missing
         game.allow_any_player_answer = True
         game.last_waiting_msg_id = data.get("last_waiting_msg_id")
+        game.state_lock = asyncio.Lock()
         return game
 
     async def running_initialization(self) -> None:
         # Load validation dictionary (all words)
         try:
-            with open("chainnokizuna/data/all-five.json", "rb") as f:
-                valid_data = orjson.loads(f.read())
+            import aiofiles
+            async with aiofiles.open("chainnokizuna/data/all-five.json", "rb") as f:
+                valid_data = orjson.loads(await f.read())
             self.dictionary = [w.lower() for w in valid_data]
         except Exception as e:
             logger.error(f"Failed to load validation dictionary: {e}")
@@ -66,8 +69,9 @@ class GuessTheWordGame(ClassicGame):
 
         # Load common words for target selection
         try:
-            with open("chainnokizuna/data/commonfiveletterwords.json", "rb") as f:
-                target_data = orjson.loads(f.read())
+            import aiofiles
+            async with aiofiles.open("chainnokizuna/data/commonfiveletterwords.json", "rb") as f:
+                target_data = orjson.loads(await f.read())
             target_dictionary = [w.lower() for w in target_data.keys() if len(w) == 5]
             self.target_word = random.choice(target_dictionary)
         except Exception as e:
@@ -99,59 +103,66 @@ class GuessTheWordGame(ClassicGame):
         self.time_left = self.time_limit
 
     async def handle_answer(self, message: types.Message) -> None:
-        # Ignore bot messages (including our own and VP bot)
-        if message.from_user.is_bot:
-            return
+        """Processes a potential answer from a player and validates it against game rules."""
+        async with self.state_lock:
+            # Prevent double-processing if game ended while message was in transit
+            if self.answered:
+                return
 
-        guess = message.text.lower()
+            # Ignore bot messages (including our own and VP bot)
+            if message.from_user.is_bot:
+                return
 
-        # Strict 5-letter validation: silent ignore if not 5 letters
-        if len(guess) != 5:
-            return
+            guess = message.text.lower()
 
-        if not guess.isalpha():
-            # Still valid to reply here as it's a "bad" 5-letter word
-            await message.reply("Your guess must contain only letters!")
-            return
+            # Strict 5-letter validation: silent ignore if not 5 letters
+            if len(guess) != 5:
+                return
 
-        # Dictionary validation
-        if not self.dictionary:
-             try:
-                with open("chainnokizuna/data/all-five.json", "rb") as f:
-                    valid_data = orjson.loads(f.read())
-                self.dictionary = [w.lower() for w in valid_data]
-             except Exception:
-                pass
-        
-        if guess not in self.dictionary:
-            await message.reply(f"<i>{guess.upper()}</i> is not in my 5-letter dictionary!")
-            return
+            if not guess.isalpha():
+                # Still valid to reply here as it's a "bad" 5-letter word
+                await message.reply("Your guess must contain only letters!")
+                return
 
-        # Delete previous waiting message if it exists
-        if self.last_waiting_msg_id:
-            try:
-                await bot.delete_message(self.group_id, self.last_waiting_msg_id)
-                self.last_waiting_msg_id = None
-            except Exception:
-                pass
+            # Dictionary validation
+            if not self.dictionary:
+                 try:
+                    import aiofiles
+                    async with aiofiles.open("chainnokizuna/data/all-five.json", "rb") as f:
+                        valid_data = orjson.loads(await f.read())
+                    self.dictionary = [w.lower() for w in valid_data]
+                 except Exception:
+                    pass
+            
+            if guess not in self.dictionary:
+                await message.reply(f"<i>{guess.upper()}</i> is not in my 5-letter dictionary!")
+                return
 
-        # Dynamic Participation: Add player if they haven't "joined"
-        from chainnokizuna.models.player import Player
-        player = next((p for p in self.players if p.user_id == message.from_user.id), None)
-        if not player:
-            player = await Player.create(message.from_user)
-            self.players.append(player)
+            # Delete previous waiting message if it exists
+            if self.last_waiting_msg_id:
+                try:
+                    await bot.delete_message(self.group_id, self.last_waiting_msg_id)
+                    self.last_waiting_msg_id = None
+                except Exception:
+                    pass
 
-        self.guess_count += 1
-        
-        # Calculate hints
-        result = self._calculate_hints(guess)
-        emojis_spaced = " ".join(list(result))
-        history_line = f"{emojis_spaced} <b>{guess.upper()}</b>"
-        self.guess_history.append(history_line)
-        
-        if guess == self.target_word:
-            self.answered = True
+            # Dynamic Participation: Add player if they haven't "joined"
+            from chainnokizuna.models.player import Player
+            player = next((p for p in self.players if p.user_id == message.from_user.id), None)
+            if not player:
+                player = await Player.create(message.from_user)
+                self.players.append(player)
+
+            self.guess_count += 1
+            
+            # Calculate hints
+            result = self._calculate_hints(guess)
+            emojis_spaced = " ".join(list(result))
+            history_line = f"{emojis_spaced} <b>{guess.upper()}</b>"
+            self.guess_history.append(history_line)
+            
+            if guess == self.target_word:
+                self.answered = True
             player = next((p for p in self.players if p.user_id == message.from_user.id), None)
             if player:
                 player.word_count += 1
@@ -174,8 +185,12 @@ class GuessTheWordGame(ClassicGame):
 
         # Not correct
         header = f"<b>5-letter mode</b> · {self.guess_count}/{self.max_guesses}"
-        # Show all history lines up to max_guesses
-        history_display = "\n".join(self.guess_history)
+        # Telegram limit is 4096. Each line is ~20 chars. 100 lines = 2000 chars. Safe.
+        # But we truncate just in case to keep the UI clean.
+        visible_history = self.guess_history[-15:] # Show last 15 guesses
+        history_display = "\n".join(visible_history)
+        if len(self.guess_history) > 15:
+            history_display = f"... ({len(self.guess_history) - 15} previous guesses)\n" + history_display
         
         hint_msg = f"{header}\n\n{history_display}"
         
